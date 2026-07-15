@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KVgrad — Query-Agnostic KV Cache Eviction via Gradient-based Global Importance Scoring</title>
+<meta name="description" content="KVgrad: a query-agnostic KV cache eviction method that scores each cache entry by its global impact on the model's final representation, achieving 6.42x average compression with under 2% loss." />
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    --paper:   #FBFAF7;
+    --paper-2: #F4F2EC;
+    --ink:     #17140F;
+    --muted:   #6B655C;
+    --line:    #E4E0D7;
+    --accent:  #CE3B2E;   /* KVgrad red — the paper's own plot color */
+    --accent-d:#A82C22;
+    --blue:    #3F6DB5;   /* KVzip+ blue, for comparison rows */
+    --gray:    #9A948A;
+
+    --display: "Space Grotesk", system-ui, sans-serif;
+    --body:    "Inter", system-ui, sans-serif;
+    --mono:    "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 28px; }
+
+  a { color: var(--accent-d); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  ::selection { background: var(--accent); color: #fff; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 74px 0 46px; border-bottom: 1px solid var(--line); }
+
+  .venue {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-d);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    padding: 4px 10px;
+    margin-bottom: 26px;
+  }
+
+  h1.title {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(34px, 6vw, 56px);
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+  }
+  h1.title .kv { color: var(--accent); }
+
+  .subtitle {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(17px, 2.4vw, 22px);
+    color: var(--muted);
+    margin: 0 0 34px;
+    max-width: 720px;
+  }
+
+  /* ---------- Authors ---------- */
+  .authors {
+    font-size: 17px;
+    line-height: 2;
+    margin-bottom: 6px;
+  }
+  .authors .a { white-space: nowrap; margin-right: 2px; }
+  .authors sup { color: var(--accent); font-family: var(--mono); font-size: 12px; }
+
+  .affil {
+    font-size: 14.5px;
+    color: var(--muted);
+    margin-bottom: 30px;
+  }
+  .affil sup { color: var(--accent); font-family: var(--mono); }
+
+  .editnote {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--gray);
+    background: var(--paper-2);
+    border-left: 2px solid var(--line);
+    padding: 6px 12px;
+    margin: 0 0 30px;
+    border-radius: 0 3px 3px 0;
+  }
+
+  /* ---------- Buttons ---------- */
+  .buttons { display: flex; flex-wrap: wrap; gap: 12px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--paper);
+    background: var(--ink);
+    border: 1px solid var(--ink);
+    border-radius: 4px;
+    padding: 11px 18px;
+    transition: transform .12s ease, background .12s ease;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-2px); background: #000; }
+  .btn svg { width: 17px; height: 17px; fill: currentColor; }
+  .btn.alt { background: transparent; color: var(--ink); }
+  .btn.alt:hover { background: var(--paper-2); }
+  .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.accent:hover { background: var(--accent-d); }
+
+  /* ---------- Sections ---------- */
+  section.block { padding: 52px 0; border-bottom: 1px solid var(--line); }
+  .section-label { margin-bottom: 20px; }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 27px;
+    letter-spacing: -0.01em;
+    margin: 6px 0 18px;
+  }
+
+  p.lead { margin: 0 0 16px; }
+  p.lead:last-child { margin-bottom: 0; }
+
+  /* ---------- Idea diagram ---------- */
+  .idea {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin: 28px 0 6px;
+  }
+  .idea-card {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 20px 20px 16px;
+    background: var(--paper-2);
+  }
+  .idea-card.ours { border-color: var(--accent); background: #fdf3f1; }
+  .idea-card .tag {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .idea-card.ours .tag { color: var(--accent-d); }
+  .idea-card h3 {
+    font-family: var(--display);
+    font-size: 17px;
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  .idea-card p { margin: 0; font-size: 14.5px; color: var(--muted); }
+  .idea svg { width: 100%; height: auto; display: block; margin-bottom: 14px; }
+
+  .formula {
+    font-family: var(--mono);
+    font-size: 14px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 16px 18px;
+    margin: 24px 0 0;
+    overflow-x: auto;
+    line-height: 1.9;
+  }
+  .formula .lc { color: var(--blue); }
+  .formula .dc { color: var(--accent); }
+  .formula .cm { color: var(--gray); }
+
+  /* ---------- Metrics ---------- */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 30px;
+  }
+  .metric { background: var(--paper); padding: 26px 22px; }
+  .metric .num {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 40px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+  }
+  .metric .num small { font-size: 22px; font-weight: 600; }
+  .metric .lab {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+
+  /* ---------- Table ---------- */
+  .table-note { font-size: 14px; color: var(--muted); margin: 0 0 16px; }
+
+  .tbl-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    min-width: 560px;
+  }
+  thead th {
+    text-align: right;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--ink);
+    white-space: nowrap;
+  }
+  thead th.grp {
+    text-align: center;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 4px;
+    color: var(--ink);
+  }
+  thead th:first-child { text-align: left; }
+  tbody td {
+    text-align: right;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody td:first-child { text-align: left; color: var(--ink); }
+  tbody tr.kvzip td { color: var(--blue); }
+  tbody tr.kvgrad td { color: var(--accent-d); font-weight: 700; }
+  tbody .method { font-weight: 500; }
+  tbody tr.groupend td { border-bottom: 2px solid var(--line); }
+
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+
+  /* ---------- BibTeX ---------- */
+  pre.bib {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    background: var(--ink);
+    color: #EDE9E0;
+    border-radius: 8px;
+    padding: 22px 24px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre.bib .k { color: #E39A8F; }
+  pre.bib .f { color: #9FB4D8; }
+
+  .copy-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  button.copy {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: background .12s ease;
+  }
+  button.copy:hover { background: var(--paper-2); }
+
+  /* ---------- Footer ---------- */
+  footer { padding: 40px 0 60px; }
+  footer p { font-size: 13.5px; color: var(--muted); margin: 4px 0; }
+  footer .mono { font-family: var(--mono); font-size: 12px; color: var(--gray); }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 720px) {
+    body { font-size: 16px; }
+    .idea { grid-template-columns: 1fr; }
+    .metrics { grid-template-columns: 1fr; }
+    .metric .num { font-size: 34px; }
+    .hero { padding: 52px 0 38px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .btn:hover { transform: none; }
+    * { transition: none !important; }
+  }
+
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap">
+    <span class="venue">NeurIPS 2026 · Under Review</span>
+
+    <h1 class="title"><span class="kv">KVgrad</span>: Query-Agnostic KV&nbsp;Cache Eviction</h1>
+    <p class="subtitle">Gradient-based global importance scoring that traces each cache entry's influence all the way to the model's final representation.</p>
+
+    <!-- EDIT: replace with the real author list and affiliations -->
+    <div class="authors">
+      <span class="a">Jihwan Kwak<sup>1</sup></span>,
+      <span class="a">Author Two<sup>1</sup></span>,
+      <span class="a">Author Three<sup>1</sup></span>,
+      <span class="a">Taesup Moon<sup>1</sup></span>
+    </div>
+    <div class="affil"><sup>1</sup>MIND Lab, Seoul National University</div>
+
+    <p class="editnote">▸ Placeholder authors / links — edit the marked spots in index.html (author list, arXiv &amp; code URLs) before publishing.</p>
+
+    <div class="buttons">
+      <!-- EDIT arXiv id -->
+      <a class="btn accent" href="https://arxiv.org/abs/XXXX.XXXXX" aria-label="Read the paper on arXiv">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2h11l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm10 1.5V8h4.5L14 3.5zM7 12h10v1.4H7V12zm0 3.2h10v1.4H7v-1.4zm0 3.2h7v1.4H7v-1.4z"/></svg>
+        arXiv
+      </a>
+      <!-- EDIT pdf link (or point to arXiv pdf) -->
+      <a class="btn alt" href="https://arxiv.org/pdf/XXXX.XXXXX" aria-label="Download the PDF">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4 6.3 11.7l1.4-1.4L11 13.6V3h1zM5 19h14v2H5v-2z"/></svg>
+        PDF
+      </a>
+      <!-- EDIT github repo -->
+      <a class="btn" href="https://github.com/USERNAME/kvgrad" aria-label="View source code on GitHub">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.28 5.69.42.36.79 1.08.79 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
+        Code
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ============ ABSTRACT ============ -->
+<section class="block">
+  <div class="wrap">
+    <div class="eyebrow section-label">Abstract</div>
+    <p class="lead">Transformer LLMs are bottlenecked by the KV cache, which scales linearly with context. Existing eviction methods score cache entries by their <em>local</em> contribution to the attention output, ignoring how that information propagates downstream to the final representation.</p>
+    <p class="lead">KVgrad instead assigns each entry a query-agnostic <em>global</em> importance score. A first-order Taylor expansion factorizes the impact of removing a cached value into a linear <strong>local component</strong> and a gradient-based <strong>downstream sensitivity</strong>, combined through a magnitude-aware, probe-specific scoring scheme. On RULER and LongBench, KVgrad reaches an average maximum compression of 6.42× with under 2% loss, and its signal distills cleanly into a lightweight MLP for zero-overhead online compression.</p>
+  </div>
+</section>
+
+<!-- ============ KEY IDEA ============ -->
+<section class="block">
+  <div class="wrap">
+    <div class="eyebrow section-label">The idea</div>
+    <h2>Look past the attention output</h2>
+    <p class="lead">A cache entry's true importance isn't just what it contributes at its own layer — it's how far that contribution echoes through the remaining blocks. KVgrad measures the full influence flow from the value vector <span style="font-family:var(--mono)">v<sub>c</sub><sup>ℓ</sup></span> to the final hidden state.</p>
+
+    <div class="idea">
+      <div class="idea-card">
+        <div class="tag">Prior work · local view</div>
+        <svg viewBox="0 0 300 120" aria-hidden="true">
+          <rect x="20" y="88" width="26" height="20" rx="3" fill="#9A948A"/>
+          <rect x="20" y="60" width="26" height="20" rx="3" fill="#CFCABF"/>
+          <rect x="20" y="32" width="26" height="20" rx="3" fill="#CFCABF"/>
+          <rect x="20" y="4"  width="26" height="20" rx="3" fill="#CFCABF"/>
+          <line x1="52" y1="98" x2="120" y2="72" stroke="#3F6DB5" stroke-width="2.5"/>
+          <circle cx="120" cy="72" r="6" fill="#3F6DB5"/>
+          <text x="134" y="76" font-family="JetBrains Mono, monospace" font-size="11" fill="#6B655C">stops at aₚˡ</text>
+          <text x="20" y="120" font-family="JetBrains Mono, monospace" font-size="9" fill="#9A948A">cache</text>
+        </svg>
+        <h3>Scores the attention output only</h3>
+        <p>KVzip and KVzip+ terminate the importance signal at layer ℓ, discarding everything the FFN and higher layers do with it.</p>
+      </div>
+      <div class="idea-card ours">
+        <div class="tag">KVgrad · global view</div>
+        <svg viewBox="0 0 300 120" aria-hidden="true">
+          <rect x="20" y="88" width="26" height="20" rx="3" fill="#CE3B2E"/>
+          <rect x="20" y="60" width="26" height="20" rx="3" fill="#F1B7B0"/>
+          <rect x="20" y="32" width="26" height="20" rx="3" fill="#F1B7B0"/>
+          <rect x="20" y="4"  width="26" height="20" rx="3" fill="#F1B7B0"/>
+          <path d="M52 98 L110 72 L150 50 L200 26 L262 14" fill="none" stroke="#CE3B2E" stroke-width="2.5"/>
+          <circle cx="262" cy="14" r="6" fill="#CE3B2E"/>
+          <text x="150" y="110" font-family="JetBrains Mono, monospace" font-size="11" fill="#A82C22">traces to xₚᴸ⁺¹</text>
+        </svg>
+        <h3>Traces influence to the final layer</h3>
+        <p>A per-probe chain rule adds the downstream gradient sensitivity, capturing the entry's end-to-end effect in a single backward pass.</p>
+      </div>
+    </div>
+
+    <div class="formula" aria-label="KVgrad importance score">
+      <span class="cm"># importance of cache entry (ℓ, c)</span><br />
+      S<sub>ℓ,c</sub> = max<sub>p∈P</sub> &nbsp; A<sub>p,c</sub><sup>ℓ</sup> &nbsp; <span class="lc">‖ v<sub>c</sub><sup>ℓ</sup> W<sub>O</sub><sup>ℓ</sup> ‖₂</span> &nbsp; <span class="dc">‖ ∇<sub>aₚˡ</sub> Φ ‖₂</span><br />
+      <span class="cm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="lc">↑ local component</span> &nbsp;&nbsp; <span class="dc">↑ downstream sensitivity</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ KEY RESULTS ============ -->
+<section class="block">
+  <div class="wrap">
+    <div class="eyebrow section-label">Key results</div>
+    <h2>Higher compression, negligible loss</h2>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="num">6.42<small>×</small></div>
+        <div class="lab">avg. max compression<br />at &lt; 2% accuracy loss</div>
+      </div>
+      <div class="metric">
+        <div class="num">+32.4<small>%</small></div>
+        <div class="lab">NL-CR gain over KVzip+<br />(τ = 2, geom. mean)</div>
+      </div>
+      <div class="metric">
+        <div class="num">0<small>×</small></div>
+        <div class="lab">measurable overhead<br />with the MLP surrogate</div>
+      </div>
+    </div>
+
+    <p class="table-note">Near-lossless compression ratio (NL-CR) — the largest compression ratio staying within τ% of the uncompressed accuracy. Higher is better; KVgrad wins in nearly every setting.</p>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2">Model</th>
+            <th rowspan="2">Method</th>
+            <th class="grp" colspan="2">RULER</th>
+            <th class="grp" colspan="2">LongBench</th>
+          </tr>
+          <tr>
+            <th>τ=2</th><th>τ=5</th><th>τ=2</th><th>τ=5</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="kvzip"><td>Qwen3-0.6B</td><td class="method">KVzip+</td><td>3.36</td><td>4.24</td><td>3.82</td><td>4.81</td></tr>
+          <tr class="kvgrad groupend"><td></td><td class="method">KVgrad</td><td>5.04</td><td>7.13</td><td>6.35</td><td>8.77</td></tr>
+
+          <tr class="kvzip"><td>Qwen3-4B</td><td class="method">KVzip+</td><td>5.81</td><td>6.82</td><td>5.28</td><td>6.35</td></tr>
+          <tr class="kvgrad groupend"><td></td><td class="method">KVgrad</td><td>7.19</td><td>8.90</td><td>6.96</td><td>8.77</td></tr>
+
+          <tr class="kvzip"><td>Qwen3-8B</td><td class="method">KVzip+</td><td>7.58</td><td>8.44</td><td>4.59</td><td>6.65</td></tr>
+          <tr class="kvgrad groupend"><td></td><td class="method">KVgrad</td><td>6.82</td><td>8.44</td><td>6.96</td><td>8.77</td></tr>
+
+          <tr class="kvzip"><td>Llama-3.1-8B</td><td class="method">KVzip+</td><td>6.13</td><td>9.90</td><td>3.67</td><td>6.17</td></tr>
+          <tr class="kvgrad"><td></td><td class="method">KVgrad</td><td>8.00</td><td>11.62</td><td>4.76</td><td>9.93</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <span><span class="dot" style="background:var(--blue)"></span>KVzip+ (strongest prior baseline)</span>
+      <span><span class="dot" style="background:var(--accent)"></span>KVgrad (ours)</span>
+    </div>
+
+    <p class="lead" style="margin-top:26px">Beyond text, KVgrad transfers to vision-language models — staying competitive on long-video benchmarks like <strong>VideoMME</strong> and <strong>MLVU</strong> — pointing to a unified path for importance-aware compression across modalities.</p>
+  </div>
+</section>
+
+<!-- ============ BIBTEX ============ -->
+<section class="block">
+  <div class="wrap">
+    <div class="eyebrow section-label">Citation</div>
+    <div class="copy-row">
+      <h2 style="margin:0">BibTeX</h2>
+      <button class="copy" id="copyBtn" type="button">Copy</button>
+    </div>
+    <pre class="bib" id="bibtex"><span class="k">@inproceedings</span>{<span class="f">kwak2026kvgrad</span>,
+  <span class="f">title</span>     = {KVgrad: Query-Agnostic KV Cache Eviction via
+               Gradient-based Global Importance Scoring},
+  <span class="f">author</span>    = {Kwak, Jihwan and others},
+  <span class="f">booktitle</span> = {Advances in Neural Information Processing Systems (NeurIPS)},
+  <span class="f">year</span>      = {2026}
+}</pre>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap">
+    <p>KVgrad · MIND Lab, Seoul National University</p>
+    <p class="mono">Page template — edit author list, links, and BibTeX before publishing.</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var btn = document.getElementById('copyBtn');
+    var bib = document.getElementById('bibtex');
+    if (!btn || !bib) return;
+    btn.addEventListener('click', function () {
+      var text = bib.innerText;
+      navigator.clipboard.writeText(text).then(function () {
+        var prev = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        setTimeout(function () { btn.textContent = prev; }, 1600);
+      }).catch(function () {
+        btn.textContent = 'Copy failed';
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>
