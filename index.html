@@ -106,9 +106,16 @@
   .affil {
     font-size: 14.5px;
     color: var(--muted);
-    margin-bottom: 30px;
+    margin-bottom: 6px;
   }
   .affil sup { color: var(--accent); font-family: var(--mono); }
+
+  .contrib-note {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 0 0 30px;
+  }
+  .contrib-note sup { color: var(--accent); font-family: var(--mono); }
 
   .editnote {
     font-family: var(--mono);
@@ -161,6 +168,27 @@
   p.lead { margin: 0 0 16px; }
   p.lead:last-child { margin-bottom: 0; }
 
+  /* ---------- Updates ---------- */
+  .updates { list-style: none; margin: 0; padding: 0; }
+  .updates li {
+    display: flex;
+    gap: 20px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .updates li:first-child { padding-top: 0; }
+  .updates li:last-child { border-bottom: none; padding-bottom: 0; }
+  .updates .date {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent-d);
+    white-space: nowrap;
+    min-width: 96px;
+    padding-top: 2px;
+  }
+  .updates .what { font-size: 16px; }
+
   /* ---------- Idea diagram ---------- */
   .idea {
     display: grid;
@@ -193,7 +221,7 @@
   .idea-card p { margin: 0; font-size: 14.5px; color: var(--muted); }
   .idea svg { width: 100%; height: auto; display: block; margin-bottom: 14px; }
 
-    .idea-figure { margin: 28px 0 6px; }
+  .idea-figure { margin: 28px 0 6px; }
   .idea-figure img {
     width: 100%;
     height: auto;
@@ -208,7 +236,7 @@
     margin-top: 12px;
     line-height: 1.5;
   }
- 
+
   .formula {
     font-family: var(--mono);
     font-size: 14px;
@@ -223,7 +251,7 @@
   .formula .lc { color: var(--blue); }
   .formula .dc { color: var(--accent); }
   .formula .cm { color: var(--gray); }
-  
+
   /* ---------- Metrics ---------- */
   .metrics {
     display: grid;
@@ -347,6 +375,8 @@
     .metrics { grid-template-columns: 1fr; }
     .metric .num { font-size: 34px; }
     .hero { padding: 52px 0 38px; }
+    .updates li { flex-direction: column; gap: 3px; }
+    .updates .date { padding-top: 0; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -371,15 +401,14 @@
 
     <!-- EDIT: replace with the real author list and affiliations -->
     <div class="authors">
-      <span class="a">Jihwan Kwak<sup>1</sup></span>,
-      <span class="a">Sunghwan Joo<sup>1</sup></span>,
+      <span class="a">Jihwan Kwak<sup>1,*</sup></span>,
+      <span class="a">Sunghwan Joo<sup>1,*</sup></span>,
       <span class="a">Jung Yoon Hwang<sup>1</sup></span>,
       <span class="a">Jaeseok Byun<sup>1</sup></span>,
       <span class="a">Taesup Moon<sup>1</sup></span>
     </div>
     <div class="affil"><sup>1</sup>M.IN.D Lab, Seoul National University</div>
-
-    <!-- <p class="editnote">▸ Placeholder authors / links — edit the marked spots in index.html (author list, arXiv &amp; code URLs) before publishing.</p> -->
+    <div class="contrib-note"><sup>*</sup> Equal contribution</div>
 
     <div class="buttons">
       <!-- EDIT arXiv id -->
@@ -401,33 +430,17 @@
   </div>
 </header>
 
-<!-- ============ ABSTRACT ============ -->
+<!-- ============ UPDATES ============ -->
 <section class="block">
   <div class="wrap">
-    <div class="eyebrow section-label">Abstract</div>
-    <p class="lead">Transformer LLMs are bottlenecked by the KV cache, which scales linearly with context. Existing eviction methods score cache entries by their <em>local</em> contribution to the attention output, ignoring how that information propagates downstream to the final representation.</p>
-    <p class="lead">KVgrad instead assigns each entry a query-agnostic <em>global</em> importance score. A first-order Taylor expansion factorizes the impact of removing a cached value into a linear <strong>local component</strong> and a gradient-based <strong>downstream sensitivity</strong>, combined through a magnitude-aware, probe-specific scoring scheme. On RULER and LongBench, KVgrad reaches an average maximum compression of 6.42× with under 2% loss, and its signal distills cleanly into a lightweight MLP for zero-overhead online compression.</p>
-  </div>
-</section>
-
-<!-- ============ KEY IDEA ============ -->
-<section class="block">
-  <div class="wrap">
-    <div class="eyebrow section-label">The idea</div>
-    <h2>Look past the attention output</h2>
-    <p class="lead">A cache entry's true importance isn't just what it contributes at its own layer — it's how far that contribution echoes through the remaining blocks. KVgrad measures the full influence flow from the value vector <span style="font-family:var(--mono)">v<sub>c</sub><sup>ℓ</sup></span> to the final hidden state.</p>
-
-        <figure class="idea-figure">
-      <img src="assets/project_figure.png"
-           alt="KVgrad traces each cache entry's influence from its value vector all the way to the model's final hidden state, whereas prior work stops at the local attention output." />
-      <figcaption>Prior work scores a cache entry by its local attention contribution; KVgrad measures its global influence flow to the final layer.</figcaption>
-    </figure>
- 
-    <div class="formula" aria-label="KVgrad importance score">
-      <span class="cm"># importance of cache entry (ℓ, c)</span><br />
-      S<sub>ℓ,c</sub> = max<sub>p∈P</sub> &nbsp; A<sub>p,c</sub><sup>ℓ</sup> &nbsp; <span class="lc">‖ v<sub>c</sub><sup>ℓ</sup> W<sub>O</sub><sup>ℓ</sup> ‖₂</span> &nbsp; <span class="dc">‖ ∇<sub>aₚˡ</sub> Φ ‖₂</span><br />
-      <span class="cm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="lc">↑ local component</span> &nbsp;&nbsp; <span class="dc">↑ downstream sensitivity</span>
-    </div>
+    <div class="eyebrow section-label">Updates</div>
+    <ul class="updates">
+      <!-- EDIT: add newest entries at the top -->
+      <li>
+        <span class="date">2026.07.11</span>
+        <span class="what">Presented KVgrad at the <strong>AdaptFM Workshop @ ICML 2026</strong>.</span>
+      </li>
+    </ul>
   </div>
 </section>
 
@@ -492,7 +505,28 @@
   </div>
 </section>
 
-<!-- ============ BIBTEX ============ -->
+<!-- ============ KEY IDEA ============ -->
+<section class="block">
+  <div class="wrap">
+    <div class="eyebrow section-label">The idea</div>
+    <h2>Look past the attention output</h2>
+    <p class="lead">A cache entry's true importance isn't just what it contributes at its own layer — it's how far that contribution echoes through the remaining blocks. KVgrad measures the full influence flow from the value vector <span style="font-family:var(--mono)">v<sub>c</sub><sup>ℓ</sup></span> to the final hidden state.</p>
+
+    <figure class="idea-figure">
+      <img src="assets/project_figure.png"
+           alt="KVgrad traces each cache entry's influence from its value vector all the way to the model's final hidden state, whereas prior work stops at the local attention output." />
+      <figcaption>Prior work scores a cache entry by its local attention contribution; KVgrad measures its global influence flow to the final layer.</figcaption>
+    </figure>
+
+    <div class="formula" aria-label="KVgrad importance score">
+      <span class="cm"># importance of cache entry (ℓ, c)</span><br />
+      S<sub>ℓ,c</sub> = max<sub>p∈P</sub> &nbsp; A<sub>p,c</sub><sup>ℓ</sup> &nbsp; <span class="lc">‖ v<sub>c</sub><sup>ℓ</sup> W<sub>O</sub><sup>ℓ</sup> ‖₂</span> &nbsp; <span class="dc">‖ ∇<sub>aₚˡ</sub> Φ ‖₂</span><br />
+      <span class="cm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="lc">↑ local component</span> &nbsp;&nbsp; <span class="dc">↑ downstream sensitivity</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BIBTEX (hidden until venue is settled) ============ -->
 <!-- <section class="block">
   <div class="wrap">
     <div class="eyebrow section-label">Citation</div>
@@ -513,8 +547,7 @@
 <!-- ============ FOOTER ============ -->
 <footer>
   <div class="wrap">
-    <p>KVgrad · MIND Lab, Seoul National University</p>
-    <!-- <p class="mono">Page template — edit author list, links, and BibTeX before publishing.</p> -->
+    <p>KVgrad · M.IN.D Lab, Seoul National University</p>
   </div>
 </footer>
 
